@@ -61,6 +61,8 @@ def terrain_linesample(current_location,azimuth,distance,elevation):
 
     #drop due to curvature of earth
     h = current_altitude        #current altitude
+    if h<0:
+        h=0
     r = 6371000    #radius of earth
     d = 0 #distance from observer to point
     a = np.sqrt(((h+r)**2)-r**2)
@@ -102,13 +104,14 @@ def terrain_assess_poor(elevation,distance_meters,sunset_start_altitude = 0.5,cu
             quality=0
     return quality
 
-
 def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1):
     # uses bisectional analysis to give a better rating of sunset quality
+    show_plot=False
+
     delta=0.05
     current_altitude=elevation[0]+0.1
     last_sun_high=10
-    last_sun_low=0
+    last_sun_low=-10
     last_sun_mid=(last_sun_high-last_sun_low)/2+last_sun_low
     i=0
     r = last_sun_high-last_sun_low
@@ -119,7 +122,9 @@ def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1
     underbounds=False
     top_half=False
     bottom_half=False
-    plt.plot(elevation)
+    steps=0
+    if show_plot:
+        plt.plot(elevation)
     while r>delta:
         if high_flag:
             last_sun_high_line=[]
@@ -138,6 +143,11 @@ def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1
         mid_flag=True
         mid_check_only_flag=False
 
+
+        overbounds=False
+        underbounds=False
+        top_half=False
+        bottom_half=False
         for k in range(len(distance_meters)-1):
             k=k+1
             if not mid_check_only_flag:
@@ -149,7 +159,6 @@ def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1
                     bottom_half=True
                 else:
                     underbounds=True
-                    print('error in numerical analysis')
             else:
                 if elevation[k]>last_sun_mid_line[k]:
                     top_half=True
@@ -158,10 +167,9 @@ def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1
             mid_check_only_flag=True
 
         if overbounds:
-            last_sun_high=last_sun_high+10
-            last_sun_low_line=last_sun_high_line
-            last_sun_low=last_sun_high
-            low_flag=False
+            rating=0
+            plt.clf()
+            return rating
         elif top_half:
             last_sun_low=last_sun_mid
             last_sun_low_line=last_sun_mid_line
@@ -181,10 +189,26 @@ def terrain_assess_fine(elevation,distance_meters,current_altitude=0,delta = 0.1
             last_sun_high=last_sun_low
             high_flag=False
             last_sun_low=0
+        if show_plot:
+            #plt.plot(last_sun_high_line,color = 'red')
+            plt.plot(last_sun_mid_line,color = 'k')
+            #plt.plot(last_sun_low_line,color = 'blue')
+        steps=steps+1
+        if steps>10:
+            print('timed out. high:',last_sun_high,' low: ',last_sun_low,' mid: ', last_sun_mid)
+            rating=10*np.exp(-0.2*last_sun_mid)
+            if show_plot:
+                plt.show()
+                print(rating)
+            return rating
 
-            plt.plot(last_sun_high_line,last_sun_low_line,last_sun_mid_line)
-            plt.show()
-    return
+    rating=10*np.exp(-0.2*last_sun_mid)
+    if show_plot:
+        plt.show()
+        print(rating)
+
+    
+    return rating
 
 def solar_postion_time_calcs(current_location):
     #calculates the solar position and time of sunset for a given location
@@ -196,9 +220,9 @@ def solar_postion_time_calcs(current_location):
     site=Location(latitude=current_location[1], longitude=current_location[0], tz="Canada/Pacific")
     times=pd.date_range(date_local, periods=288, freq='5min', tz=site.tz)  #sample over 24h every 5min
     rise_set_transit=site.get_sun_rise_set_transit(times)
-    srise=rise_set_transit['sunset'].iloc[0]
-    sset=rise_set_transit['sunrise'].iloc[0]
-
+    sset=rise_set_transit['sunset'].iloc[0]
+    srise=rise_set_transit['sunrise'].iloc[0]
+    #print('sunset time: ',sset)
     labels = ['sunset','sunrise']
     i=0
     azimuths = [0,0]
@@ -216,6 +240,7 @@ def solar_postion_time_calcs(current_location):
 #data_convert()
 
 current_location = [-125.906616,49.152985,] # long lat
+#current_location = [-125.4,49.150,] # long lat
 
 with rasterio.open("output_hh_latlon.tif") as src:
     # print("CRS:", src.crs)
@@ -243,8 +268,8 @@ to_gps = Transformer.from_crs("EPSG:3979","EPSG:4326" ,always_xy=True)
 to_epsg3979 = Transformer.from_crs("EPSG:4326","EPSG:3979" ,always_xy=True)
 
 
-delta = 0.001
-length = 10
+delta = 0.01
+length = 5
 long_min=current_location[0]-delta*length
 long_max=current_location[0]+delta*length
 lat_min=current_location[1]-delta*length
@@ -253,37 +278,43 @@ current_long=long_min
 current_lat=lat_min
 sunset_start_altitude=10
 rating = []
+counter=0
 
-# while current_long<=long_max:
-#     while current_lat<=lat_max:
-#         azimuths,sunset_az_terminus,sunrise_az_terminus = solar_postion_time_calcs([current_long,current_lat])
-#         terrain_adjusted = terrain_linesample(current_location,azimuths[0],10000,elevation)
-#         terrain_aseess_result=terrain_assess_poor(terrain_adjusted[0],terrain_adjusted[1],sunset_start_altitude,terrain_adjusted[2])
-#         rating.append([terrain_aseess_result,current_long,current_lat])
-#         current_lat=current_lat+delta
-#     current_lat=lat_min
-#     current_long=current_long+delta
+while current_long<=long_max:
+    print('new long:', counter)
+    while current_lat<=lat_max:
+        azimuths,sunset_az_terminus,sunrise_az_terminus = solar_postion_time_calcs([current_long,current_lat])
+        terrain_adjusted = terrain_linesample([current_long,current_lat],azimuths[0],10000,elevation)
+        terrain_assess_result=terrain_assess_fine(terrain_adjusted[0],terrain_adjusted[1],delta=0.1)
+        rating.append([terrain_assess_result,current_long,current_lat])
+        current_lat=current_lat+delta
+    current_lat=lat_min
+    current_long=current_long+delta
+    counter=counter+1
+
+rating=np.array(rating)
+
+# azimuths,sunset_az_terminus,sunrise_az_terminus = solar_postion_time_calcs(current_location)
+
+# terrain_adjusted = terrain_linesample(current_location,azimuths[0],10000,elevation)
+
+# sunset_start_altitude=10
+
+# terrain_aseess_result=terrain_assess_poor(terrain_adjusted[0],terrain_adjusted[1],sunset_start_altitude,terrain_adjusted[2])
+# good_rating=terrain_assess_fine(terrain_adjusted[0],terrain_adjusted[1],sunset_start_altitude,terrain_adjusted[2])
 
 
-azimuths,sunset_az_terminus,sunrise_az_terminus = solar_postion_time_calcs(current_location)
+#colours = ['red','orange','blue','green']
+#cmap = ListedColormap(colours)
+#norm = BoundaryNorm(boundaries=[-0.5, 0.5, 1.5, 2.5, 3.5], ncolors=cmap.N)
+#plt.imshow(rating[1],rating[2],rating[0])
+#plt.show()
 
-terrain_adjusted = terrain_linesample(current_location,azimuths[0],10000,elevation)
-
-sunset_start_altitude=10
-
-terrain_aseess_result=terrain_assess_poor(terrain_adjusted[0],terrain_adjusted[1],sunset_start_altitude,terrain_adjusted[2])
-terrain_assess_good=terrain_assess_fine(terrain_adjusted[0],terrain_adjusted[1],sunset_start_altitude,terrain_adjusted[2])
-
-
-colours = ['red','orange','blue','green']
-cmap = ListedColormap(colours)
-norm = BoundaryNorm(boundaries=[-0.5, 0.5, 1.5, 2.5, 3.5], ncolors=cmap.N)
 
 plt.imshow(elevation, cmap='terrain', extent=extent)
-# plt.scatter(rating[1], rating[2], c=cmap[rating[0]], s=5, marker='o')
-#plt.plot(rating[0],rating[1],)
-plt.plot([current_location[0],sunset_az_terminus[0]],[current_location[1],sunset_az_terminus[1]], color='darkorange', linestyle='-', linewidth=2)#sunset
-plt.plot([current_location[0],sunrise_az_terminus[0]],[current_location[1],sunrise_az_terminus[1]], color='deepskyblue', linestyle='-', linewidth=2)#sunrise
+plt.scatter(rating[:,1], rating[:,2],c=rating[:,0],marker='x',cmap='hot')
+#plt.plot([current_location[0],sunset_az_terminus[0]],[current_location[1],sunset_az_terminus[1]], color='darkorange', linestyle='-', linewidth=2)#sunset
+#plt.plot([current_location[0],sunrise_az_terminus[0]],[current_location[1],sunrise_az_terminus[1]], color='deepskyblue', linestyle='-', linewidth=2)#sunrise
 
 #plt.plot(current_location[0], current_location[1], marker='x', color='red', markersize=10, label="Target Point")
 # plt.plot([current_location[0],current_location[0]+10000],[current_location[1],current_location[1]+10000], color='k', linestyle='--', linewidth=1)
@@ -294,3 +325,4 @@ plt.plot([current_location[0],sunrise_az_terminus[0]],[current_location[1],sunri
 #plt.colorbar(label='Elevation (m)')
 plt.axis('equal')
 plt.show()
+
